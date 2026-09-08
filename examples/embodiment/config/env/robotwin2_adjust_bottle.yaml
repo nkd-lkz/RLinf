@@ -1,0 +1,45 @@
+env_type: robotwin2
+total_num_envs: 1
+auto_reset: false
+ignore_terminations: false
+reward_coef: 1.0
+use_custom_reward: true
+use_rel_reward: true
+center_crop: false
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: false
+max_steps_per_rollout_epoch: 200
+max_episode_steps: 200
+rollout_epoch: 1
+is_eval: false
+enable_offload: false
+
+# Keep K=1 until the 20-step temporal-alignment check passes on the real sim.
+strict_k1: true
+action_chunk_size: 1
+
+bridge:
+  python_executable: ${oc.env:ROBOTWIN2_PYTHON}
+  robotwin_root: ${oc.env:ROBOTWIN_ROOT}
+  startup_timeout_s: 180
+  request_timeout_s: 120
+  log_path: ${oc.env:ROBOTWIN2_BRIDGE_LOG,/data/kaize/rlinf/robotwin2/logs/rlinf-bridge.log}
+
+task_config:
+  task_name: adjust_bottle
+  setting: demo_clean
+  action_type: qpos
+  instruction: adjust the bottle
+
+# Generic bring-up trigger. Replace this step threshold with a task-state or
+# physical-token trigger before using the switch in a research comparison.
+rlt_policy_switch:
+  enable: true
+  actor_start_step: 10
+
+video_cfg:
+  save_video: false
+  info_on_video: false
+  video_base_dir: ${runner.logger.log_path}/video/train
+  fps: 10

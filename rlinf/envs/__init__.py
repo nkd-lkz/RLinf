@@ -26,6 +26,7 @@ class SupportedEnvType(Enum):
     MANISKILL_RLT = "maniskill_rlt"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
+    ROBOTWIN2 = "robotwin2"
     ISAACLAB = "isaaclab"
     METAWORLD = "metaworld"
     BEHAVIOR = "behavior"
@@ -80,6 +81,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.robotwin.robotwin_env import RoboTwinEnv
 
         return RoboTwinEnv
+    elif env_type == SupportedEnvType.ROBOTWIN2:
+        from rlinf.envs.robotwin2.robotwin2_env import RoboTwin2Env
+
+        return RoboTwin2Env
     elif env_type == SupportedEnvType.ISAACLAB:
         from rlinf.envs.isaaclab import REGISTER_ISAACLAB_ENVS
 

@@ -33,6 +33,7 @@ def use_simulator_transition_replay(cfg: Any) -> bool:
         return env_type in {
             SupportedEnvType.MANISKILL_RLT,
             SupportedEnvType.ROBOTWIN,
+            SupportedEnvType.ROBOTWIN2,
         }
     except ValueError:
         return False

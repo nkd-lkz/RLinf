@@ -541,7 +541,8 @@ class EnvWorker(Worker):
             if "final_info" in infos:
                 final_info = infos["final_info"]
                 for key in final_info["episode"]:
-                    env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
+                    done_envs = chunk_dones.any(dim=1)
+                    env_info[key] = final_info["episode"][key][done_envs].cpu()
 
         intervene_actions = (
             infos["intervene_action"] if "intervene_action" in infos else None
