@@ -9,7 +9,9 @@
 - 任务：`beat_block_hammer`
 - embodiment：`aloha-agilex`
 - VLA：π0.5
-- 在线动作接口：14 维 ALOHA joint-position target，RLT 阶段 `K=1`
+- 在线动作接口：14 维 ALOHA joint-position target；正式 RLT 使用
+  `C=10`，π0.5 reference horizon 为 `H=50`。`C=1` 仅用于 transition
+  对齐调试和单独的 chunk-length 消融。
 
 RoboTwin2 bridge 暂不进入首轮训练。只有原生任务完成 B0/B1 多 seed 后，才把已经隔离的 bridge 用于论文环境迁移。
 
@@ -111,11 +113,11 @@ G0 Git 冻结
 - 三路相机：head + left/right wrist；
 - `config_name: pi05_aloha_robotwin`；
 - action/state 14 维；
-- RLT 的 `num_action_chunks: 1`；
+- RLT actor/env 的 `num_action_chunks: 10`，reference/feature model 保持 50；
 - clean reference 评测先关闭外观随机化；
 - 数据、checkpoint、norm stats 使用 hammer 专属目录与 key。
 
-必须增加配置一致性测试，至少检查 task、prompt、embodiment、三相机、14 维、`K=1` 和 norm key，防止无声复用 adjust_bottle。
+必须增加配置一致性测试，至少检查 task、prompt、embodiment、三相机、14 维、正式 `C=10`、reference `H=50` 和 norm key，防止无声复用 adjust_bottle。
 
 ### 专家数据 smoke
 
@@ -210,7 +212,7 @@ L_A0 = MSE(reconstruct(z_rlt), stopgrad(VLA_prefix))
 - reference、VLA、RLT encoder 全部冻结；
 - 只更新小型 residual actor + twin critic；
 - action 是 `a_ref + scale * tanh(delta)`；
-- K=1；
+- 正式 actor chunk `C=10`，reference horizon `H=50`；`C=1` 仅保留为调试/消融；
 - 训练 reward 对所有 B0–B3 完全相同；
 - 成功立即终止，并报告 time-to-success；
 - smoke 从 20 步扩大到完整 200 步只是管线验证，不是论文结果。
