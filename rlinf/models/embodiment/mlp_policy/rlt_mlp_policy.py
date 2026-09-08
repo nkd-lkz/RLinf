@@ -37,6 +37,8 @@ class RLTMLPPolicy(MLPPolicy):
         add_q_head: bool = True,
         q_head_type: str = "default",
         fixed_std: float = 0.002,
+        action_output_mode: str = "tanh",
+        residual_scale: float | list[float] = 1.0,
     ):
         if not add_q_head:
             raise ValueError(
@@ -77,6 +79,13 @@ class RLTMLPPolicy(MLPPolicy):
         self.fixed_std = float(fixed_std)
         if self.fixed_std <= 0:
             raise ValueError(f"fixed_std must be positive, got {self.fixed_std}.")
+        self.action_output_mode = str(action_output_mode)
+        if self.action_output_mode not in {"tanh", "residual_to_reference"}:
+            raise ValueError(
+                "action_output_mode must be 'tanh' or 'residual_to_reference', "
+                f"got {self.action_output_mode!r}."
+            )
+        self.residual_scale = residual_scale
 
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
@@ -103,6 +112,27 @@ class RLTMLPPolicy(MLPPolicy):
         )
         ref_chunk = ref_chunk[:, : self.chunk_len]
         return ref_chunk.reshape(ref_chunk.shape[0], -1)
+
+    def _decode_actor_action(
+        self, normalized_action: torch.Tensor, obs: dict
+    ) -> torch.Tensor:
+        if self.action_output_mode == "tanh":
+            return normalized_action
+        scale = torch.as_tensor(
+            self.residual_scale,
+            device=normalized_action.device,
+            dtype=normalized_action.dtype,
+        ).reshape(-1)
+        if scale.numel() == 1:
+            scale = scale.expand(self.flat_action_dim)
+        elif scale.numel() == self.step_action_dim:
+            scale = scale.repeat(self.chunk_len)
+        elif scale.numel() != self.flat_action_dim:
+            raise ValueError(
+                "residual_scale must be scalar, action_dim, or flattened chunk "
+                f"length; got {scale.numel()} values for {self.flat_action_dim}."
+            )
+        return self._get_ref_chunk(obs) + normalized_action * scale
 
     def _maybe_drop_reference(
         self,
@@ -152,9 +182,10 @@ class RLTMLPPolicy(MLPPolicy):
         action_mean = self.actor_mean(feat)
         action_std = torch.full_like(action_mean, self.fixed_std)
         probs = Normal(action_mean, action_std)
-        action = action_mean if deterministic else probs.rsample()
-        chunk_logprobs = probs.log_prob(action)
-        action = torch.tanh(action)
+        latent_action = action_mean if deterministic else probs.rsample()
+        chunk_logprobs = probs.log_prob(latent_action)
+        normalized_action = torch.tanh(latent_action)
+        action = self._decode_actor_action(normalized_action, obs)
         return action, chunk_logprobs, None
 
     def sac_q_forward(self, obs, actions, shared_feature=None, detach_encoder=False):
@@ -200,7 +231,12 @@ class RLTMLPPolicy(MLPPolicy):
             data["action"] if "action" in data else data["actions"]
         )
         actor_state = self._actor_state(obs)
-        pred_actions = self.actor_mean(self.backbone(actor_state))
+        raw_actions = self.actor_mean(self.backbone(actor_state))
+        if self.action_output_mode == "residual_to_reference":
+            pred_actions = self._decode_actor_action(torch.tanh(raw_actions), obs)
+        else:
+            # Preserve the historical BC path, which trained the raw actor mean.
+            pred_actions = raw_actions
         return F.mse_loss(pred_actions, target_actions, reduction="none")
 
     @torch.inference_mode()

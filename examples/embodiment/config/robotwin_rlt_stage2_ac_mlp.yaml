@@ -1,0 +1,340 @@
+defaults:
+- env/robotwin_adjust_bottle@env.train
+- env/robotwin_adjust_bottle@env.eval
+- hybrid_engines/fsdp@actor.fsdp_config
+- weight_syncer/patch_syncer@weight_syncer
+- override hydra/job_logging: stdout
+- _self_
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+  - file://${oc.env:EMBODIED_PATH}/config/
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+    rollout: 0-0
+    env: 0-0
+runner:
+  task_type: embodied
+  logger:
+    log_path: ${oc.env:RLINF_LOG_ROOT,/data/kaize/rlinf/runs}
+    project_name: rlinf
+    experiment_name: robotwin_rlt_stage2_ac_mlp
+    logger_backends:
+    - tensorboard
+  max_epochs: 20
+  max_steps: -1
+  only_eval: false
+  weight_sync_interval: 1
+  val_check_interval: -1
+  save_interval: 5
+  resume_dir: null
+  ckpt_path: null
+algorithm:
+  update_epoch: 1
+  rlt_schedule:
+    enable: true
+    max_updates_per_train_step: 4
+    warmup_min_size: 4
+    warmup_post_collect_updates: 4
+    train_every_episodes: 0
+    train_every_transitions: 1
+  group_size: 1
+  adv_type: embodied_sac
+  loss_type: rlt_ac
+  loss_agg_func: token-mean
+  agg_q: min
+  actor_agg_q: q1
+  enable_drq: false
+  q_head_type: ${actor.model.q_head_type}
+  bootstrap_type: standard
+  gamma: 0.99
+  tau: 0.005
+  q_weight: 1.0
+  bc_weight: 1.0
+  reference_dropout_prob: 0.0
+  actor_weight_schedule:
+    enable: false
+  entropy_tuning:
+    alpha_type: fixed_alpha
+    initial_alpha: 0.0
+    optim:
+      lr: 0.0003
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+  replay_buffer:
+    enable_cache: true
+    cache_size: 64
+    sample_window_size: 128
+    max_num_samples: 128
+    min_buffer_size: 4
+    auto_save: false
+  target_update_freq: 1
+  target_update_type: all
+  train_actor_steps: 4
+  critic_actor_ratio: 1
+  critic_subsample_size: 0
+  backup_entropy: false
+env:
+  group_name: EnvGroup
+  train:
+    rollout_epoch: 1
+    total_num_envs: 1
+    seed: 0
+    auto_reset: false
+    ignore_terminations: false
+    use_fixed_reset_state_ids: true
+    use_custom_reward: true
+    use_rel_reward: true
+    center_crop: false
+    assets_path: ${oc.env:ROBOTWIN_PATH,/data/kaize/rlinf/robotwin-native/repos/RoboTwin}
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    max_episode_steps: 20
+    max_steps_per_rollout_epoch: 20
+    group_size: 1
+    action_dim: 14
+    num_action_chunks: 1
+    ref_num_action_chunks: 50
+    rlt_policy_switch:
+      enable: true
+      trigger_mode: full_task
+      latch_until_done: true
+    video_cfg:
+      save_video: false
+      info_on_video: false
+      video_base_dir: ${runner.logger.log_path}/video/train
+    task_config:
+      task_name: adjust_bottle
+      step_lim: 200
+      planner_backend: mplib
+      render_freq: 0
+      episode_num: 1
+      use_seed: true
+      save_freq: 15
+      embodiment:
+      - aloha-agilex
+      language_num: 100
+      domain_randomization:
+        random_background: false
+        cluttered_table: false
+        clean_background_rate: 1
+        random_head_camera_dis: 0
+        random_table_height: 0
+        random_light: false
+        crazy_random_light_rate: 0
+      camera:
+        head_camera_type: D435
+        wrist_camera_type: D435
+        collect_head_camera: true
+        collect_wrist_camera: true
+      data_type:
+        rgb: true
+        third_view: false
+        depth: false
+        pointcloud: false
+        observer: false
+        endpose: false
+        qpos: true
+        mesh_segmentation: false
+        actor_segmentation: false
+      pcd_down_sample_num: 1024
+      pcd_crop: true
+      clear_cache_freq: 1
+      collect_data: false
+      eval_video_log: false
+      save_path: ${runner.logger.log_path}/sim-data/train
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    seed: 0
+    auto_reset: false
+    ignore_terminations: false
+    use_fixed_reset_state_ids: true
+    use_custom_reward: true
+    use_rel_reward: true
+    center_crop: false
+    assets_path: ${oc.env:ROBOTWIN_PATH,/data/kaize/rlinf/robotwin-native/repos/RoboTwin}
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    max_episode_steps: 20
+    max_steps_per_rollout_epoch: 20
+    group_size: 1
+    action_dim: 14
+    num_action_chunks: 1
+    ref_num_action_chunks: 50
+    rlt_policy_switch:
+      enable: true
+      trigger_mode: full_task
+      latch_until_done: true
+    video_cfg:
+      save_video: false
+      info_on_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    task_config:
+      task_name: adjust_bottle
+      step_lim: 200
+      planner_backend: mplib
+      render_freq: 0
+      episode_num: 1
+      use_seed: true
+      save_freq: 15
+      embodiment:
+      - aloha-agilex
+      language_num: 100
+      domain_randomization:
+        random_background: false
+        cluttered_table: false
+        clean_background_rate: 1
+        random_head_camera_dis: 0
+        random_table_height: 0
+        random_light: false
+        crazy_random_light_rate: 0
+      camera:
+        head_camera_type: D435
+        wrist_camera_type: D435
+        collect_head_camera: true
+        collect_wrist_camera: true
+      data_type:
+        rgb: true
+        third_view: false
+        depth: false
+        pointcloud: false
+        observer: false
+        endpose: false
+        qpos: true
+        mesh_segmentation: false
+        actor_segmentation: false
+      pcd_down_sample_num: 1024
+      pcd_crop: true
+      clear_cache_freq: 1
+      collect_data: false
+      eval_video_log: false
+      save_path: ${runner.logger.log_path}/sim-data/eval
+    is_eval: true
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: true
+  collect_prev_infos: true
+  model:
+    model_type: ${actor.model.model_type}
+    model_path: ''
+    precision: ${actor.model.precision}
+    policy_setup: ${actor.model.policy_setup}
+    action_dim: ${actor.model.action_dim}
+    num_action_chunks: ${actor.model.num_action_chunks}
+    ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
+    z_dim: ${actor.model.z_dim}
+    proprio_dim: ${actor.model.proprio_dim}
+    add_q_head: ${actor.model.add_q_head}
+    q_head_type: ${actor.model.q_head_type}
+    fixed_std: ${actor.model.fixed_std}
+    action_output_mode: ${actor.model.action_output_mode}
+    residual_scale: ${actor.model.residual_scale}
+    is_lora: false
+    lora_rank: 32
+  rlt_feature_model:
+    model_type: openpi_rlinf
+    model_path: ${oc.env:ROBOTWIN_RLT_STAGE1_CKPT}
+    precision: bf16
+    num_action_chunks: 50
+    action_dim: ${actor.model.action_dim}
+    num_steps: 5
+    add_value_head: false
+    is_lora: false
+    lora_rank: 32
+    openpi_data:
+      repo_id: robotwin-adjust-bottle-clean50
+      default_prompt: adjust the bottle upright
+      norm_stats_path: ${oc.env:ROBOTWIN_NORM_STATS,/data/kaize/rlinf/datasets/robotwin-adjust-bottle-clean50/adjust_bottle/norm_stats.json}
+    openpi:
+      task: eval
+      config_name: pi05_aloha_robotwin
+      num_images_in_input: 3
+      action_chunk: 50
+      action_horizon: 50
+      action_env_dim: 14
+      num_steps: 5
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: true
+      train_expert_only: false
+      add_value_head: false
+      detach_critic_input: true
+      use_rlt: true
+      rlt_alpha: 1.0
+      rlt_input_dim: 2048
+      rlt_embed_dim: 2048
+      rlt_prefix_seq_len: 1024
+      rlt_num_layers: 2
+      rlt_num_heads: 8
+      rlt_mlp_ratio: 4.0
+      rlt_encoder_type: append_self_attention
+      rlt_image_only: false
+      rlt_use_mask: true
+  expert_model: null
+  enable_torch_compile: false
+  enable_cuda_graph: false
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 4
+  global_batch_size: 4
+  seed: 1234
+  enable_offload: false
+  model:
+    model_type: rlt_mlp_policy
+    precision: fp32
+    policy_setup: aloha-qpos
+    action_dim: 14
+    num_action_chunks: 1
+    ref_num_action_chunks: 50
+    z_dim: 2048
+    proprio_dim: 14
+    add_value_head: false
+    add_q_head: true
+    q_head_type: default
+    fixed_std: 0.1
+    action_output_mode: residual_to_reference
+    residual_scale:
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.1
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.05
+    - 0.1
+    is_lora: false
+    lora_rank: 32
+  optim:
+    clip_grad: 10.0
+    lr: 0.0001
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 10.0
+    lr: 0.0001
+    lr_scheduler: torch_constant
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+reward:
+  use_reward_model: false
+critic:
+  use_critic_model: false

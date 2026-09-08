@@ -171,6 +171,8 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
         mlp_num_hidden_layers: int = 2,
         actor_noise_sigma: float = 0.1,
         ref_action_dropout: float = 0.0,
+        action_output_mode: str = "tanh",
+        residual_scale: float | list[float] = 1.0,
     ) -> None:
         super().__init__()
         if not add_q_head:
@@ -201,6 +203,13 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
         self.flat_action_dim = self.chunk_len * self.step_action_dim
         self.state_dim = self.z_dim + self.proprio_dim
         self.torch_compile_enabled = False
+        self.action_output_mode = str(action_output_mode)
+        if self.action_output_mode not in {"tanh", "residual_to_reference"}:
+            raise ValueError(
+                "action_output_mode must be 'tanh' or 'residual_to_reference', "
+                f"got {self.action_output_mode!r}."
+            )
+        self.residual_scale = residual_scale
 
         self.actor = DirectGaussianActor(
             state_dim=self.state_dim,
@@ -244,6 +253,27 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
         )
         ref_chunk = ref_chunk[:, : self.chunk_len]
         return ref_chunk.reshape(ref_chunk.shape[0], -1)
+
+    def _decode_actor_action(
+        self, normalized_action: torch.Tensor, obs: dict
+    ) -> torch.Tensor:
+        if self.action_output_mode == "tanh":
+            return normalized_action
+        scale = torch.as_tensor(
+            self.residual_scale,
+            device=normalized_action.device,
+            dtype=normalized_action.dtype,
+        ).reshape(-1)
+        if scale.numel() == 1:
+            scale = scale.expand(self.flat_action_dim)
+        elif scale.numel() == self.step_action_dim:
+            scale = scale.repeat(self.chunk_len)
+        elif scale.numel() != self.flat_action_dim:
+            raise ValueError(
+                "residual_scale must be scalar, action_dim, or flattened chunk "
+                f"length; got {scale.numel()} values for {self.flat_action_dim}."
+            )
+        return self._get_ref_chunk(obs) + normalized_action * scale
 
     def _state(self, obs: dict) -> torch.Tensor:
         return torch.cat([self._get_z(obs), self._get_proprio(obs)], dim=-1)
@@ -289,7 +319,7 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, None]:
         del kwargs
-        action = self.actor(
+        normalized_action = self.actor(
             self._state(obs),
             self._get_ref_chunk(obs),
             deterministic=deterministic,
@@ -297,6 +327,7 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
             apply_action_noise=apply_action_noise,
             ref_dropout=reference_dropout_prob,
         )
+        action = self._decode_actor_action(normalized_action, obs)
         return action, torch.zeros_like(action), None
 
     def sac_q_forward(

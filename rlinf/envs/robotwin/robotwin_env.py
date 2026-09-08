@@ -58,6 +58,7 @@ class RoboTwinEnv(gym.Env):
         self.video_cfg = cfg.video_cfg
 
         self.cfg = cfg
+        self._rlt_switch_cfg = cfg.get("rlt_policy_switch", None)
         self.record_metrics = record_metrics
         self._is_start = True
 
@@ -70,6 +71,9 @@ class RoboTwinEnv(gym.Env):
 
         self.prev_step_reward = torch.zeros(
             self.num_envs, dtype=torch.float32, device=self.device
+        )
+        self._rlt_switch_flags = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
         )
         if self.record_metrics:
             self._init_metrics()
@@ -135,6 +139,46 @@ class RoboTwinEnv(gym.Env):
                 self.fail_once[:] = False
                 self.returns[:] = 0.0
                 self._elapsed_steps[:] = 0
+
+    def _rlt_switch_enabled(self):
+        return bool(
+            self._rlt_switch_cfg is not None
+            and self._rlt_switch_cfg.get("enable", False)
+        )
+
+    def _reset_rlt_switch(self, env_idx=None):
+        if not self._rlt_switch_enabled():
+            return
+        if env_idx is None:
+            self._rlt_switch_flags[:] = False
+        else:
+            self._rlt_switch_flags[env_idx] = False
+
+    def _update_rlt_switch(self):
+        if not self._rlt_switch_enabled():
+            return
+        trigger_mode = self._rlt_switch_cfg.get("trigger_mode", "full_task")
+        if trigger_mode == "full_task":
+            current_flags = torch.ones_like(self._rlt_switch_flags)
+        elif trigger_mode == "elapsed_steps":
+            actor_start_step = int(self._rlt_switch_cfg.get("actor_start_step", 0))
+            current_flags = self.elapsed_steps >= actor_start_step
+        else:
+            raise ValueError(
+                "RoboTwin rlt_policy_switch.trigger_mode must be one of "
+                "{'full_task', 'elapsed_steps'}, got "
+                f"{trigger_mode!r}."
+            )
+        if self._rlt_switch_cfg.get("latch_until_done", True):
+            current_flags = self._rlt_switch_flags | current_flags
+        self._rlt_switch_flags.copy_(current_flags)
+
+    def _attach_rlt_switch_info(self, infos, chunk_step=1):
+        if self._rlt_switch_enabled():
+            infos["rlt_switch_flags"] = (
+                self._rlt_switch_flags[:, None].expand(-1, chunk_step).clone()
+            )
+        return infos
 
     def _record_metrics(self, step_reward, infos):
         episode_info = {}
@@ -253,6 +297,9 @@ class RoboTwinEnv(gym.Env):
         infos = {}
 
         self._reset_metrics(env_idx)
+        self._reset_rlt_switch(env_idx)
+        self._update_rlt_switch()
+        infos = self._attach_rlt_switch_info(infos)
 
         extracted_obs = self._extract_obs_image(raw_obs)
 
@@ -299,6 +346,8 @@ class RoboTwinEnv(gym.Env):
                 )
 
         self._elapsed_steps += actions.shape[1]
+        self._update_rlt_switch()
+        infos = self._attach_rlt_switch_info(infos)
         truncated = self._elapsed_steps >= self.cfg.max_episode_steps
         if truncated.any():
             truncations = torch.logical_or(truncated, truncations)
@@ -326,6 +375,11 @@ class RoboTwinEnv(gym.Env):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         num_envs = chunk_actions.shape[0]
         chunk_step = chunk_actions.shape[1]
+        if self._rlt_switch_enabled() and chunk_step != 1:
+            raise ValueError(
+                "Native RoboTwin RLT currently requires num_action_chunks=1 "
+                "to preserve per-step switch, reward, and done alignment."
+            )
         obs_list = []
         infos_list = []
 
@@ -359,6 +413,9 @@ class RoboTwinEnv(gym.Env):
         )
 
         self._elapsed_steps += chunk_actions.shape[1]
+        self._update_rlt_switch()
+        infos = self._attach_rlt_switch_info(infos, chunk_step=chunk_step)
+        infos_list[-1] = infos
         truncated = self._elapsed_steps >= self.cfg.max_episode_steps
         if truncated.any():
             truncations = torch.logical_or(truncated, truncations)
