@@ -148,6 +148,10 @@ bash collect_data.sh beat_block_hammer demo_clean 0
 
 下一步只运行带 sidecar 的 3-episode smoke；它会写到新的配置目录，不覆盖上述数据：
 
+当前服务器的 OIDN 初始化会报告 `invalid handle`，因此 hammer 的 physics
+采集配置与 RLinf 训练/评测环境统一设置 `ray_tracing_denoiser: optix`，避免
+采集和在线 rollout 使用不同的视觉域。
+
 ```bash
 cd /data/kaize/rlinf/robotwin-native/repos/RoboTwin
 source /data/kaize/rlinf/venvs/openpi-robotwin/bin/activate

@@ -31,6 +31,7 @@ task_config:
   task_name: beat_block_hammer
   step_lim: 200
   planner_backend: mplib # # Choices: ["curobo", "mplib"], defalut is "curobo"
+  ray_tracing_denoiser: optix
   # if you want to modify the config, please check the following tutorial first:
   # https://robotwin-platform.github.io/doc/usage/configurations.html
   render_freq: 0
