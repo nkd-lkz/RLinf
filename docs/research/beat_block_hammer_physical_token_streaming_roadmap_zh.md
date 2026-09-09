@@ -65,6 +65,12 @@ baseline/robotwin-rlt-native-v1  @ 0dd01ac9  冻结，不再改
 └── upgrade/rlinf-upstream-1c9eed0                  仅做独立上游迁移
 ```
 
+当前任务落地 commit：
+
+- RLinf hammer 配置与一致性测试：`ec937657`；
+- native RoboTwin collector 修复与 smoke 配置：`ba9d3ba`；
+- native hammer physics sidecar、配置、validator 与测试：`876638e`。
+
 当前 hammer worktree：
 
 ```bash
@@ -135,6 +141,38 @@ bash collect_data.sh beat_block_hammer demo_clean 0
 - endpose 存在；
 - action、observation、terminal 时间对齐；
 - 视频中使用正确手臂、抓锤、锤头接触方块。
+
+当前已经完成普通专家 smoke：3 个 episode（162/167/144 帧），collector
+退出码为 0，视频已人工确认动作正确。这些轨迹来自 RoboTwin 的脚本专家/MPlib，
+不是 π0.5 或 RLT rollout。
+
+下一步只运行带 sidecar 的 3-episode smoke；它会写到新的配置目录，不覆盖上述数据：
+
+```bash
+cd /data/kaize/rlinf/robotwin-native/repos/RoboTwin
+source /data/kaize/rlinf/venvs/openpi-robotwin/bin/activate
+hash -r
+
+export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json
+export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+export ROBOT_PLATFORM=ALOHA
+export PYTHONUNBUFFERED=1
+
+mkdir -p /data/kaize/rlinf/runs/beat-hammer-p0-physics-smoke
+set -o pipefail
+bash collect_data.sh beat_block_hammer demo_clean_hammer_physics_smoke 6 2>&1 \
+  | tee /data/kaize/rlinf/runs/beat-hammer-p0-physics-smoke/collector-gpu6.log
+```
+
+采集成功后执行（CPU）：
+
+```bash
+python script/validate_physics_sidecar.py \
+  data/beat_block_hammer/demo_clean_hammer_physics_smoke
+```
+
+validator 必须退出 0，且至少一个 episode 的
+`hammer_block_contact_transitions > 0`，才能采 50 条。
 
 ### H0 验收
 
@@ -231,34 +269,42 @@ L_A0 = MSE(reconstruct(z_rlt), stopgrad(VLA_prefix))
 
 ### 只做 target，不给在线策略偷看
 
-在 native RoboTwin task/SubEnv 中形成 `physics` dict，经 VectorEnv 和 RLinf wrapper 写入 transition/info。第一版字段：
+P0a 先在 native expert collector 形成离线监督 sidecar；不修改在线 observation，
+也不经过 VectorEnv 给策略输入。每个 `data/episodeN.hdf5` 对应独立的
+`physics/episodeN.hdf5`。`frames/*` 长度为 `T`，`transitions/*` 长度为
+`T-1`。逐物理步累积接触量，避免 `save_freq=15` 漏掉瞬时敲击。
+
+主要 frame 字段：
 
 ```text
-q_cmd[14]                 当前 drive target，即原 observation.state
-q_real[14]                实际关节位置 + gripper
-qvel_real[14]             articulation qvel；不可用维度用有效 mask
-tcp_left/right_pose[7]
-hammer_pose[7]
-hammer_head_pose[7]
-block_target_pose[7]
-gripper_hammer_contact[2]
-hammer_block_contact[1]
-hammer_block_impulse[3]   接触点 impulse 求和
-is_in_hand[2]
+robot/command_qpos[14]、actual_qpos[14]、actual_qvel[14]
+robot/active_tcp_pose[7]
+hammer/pose[7]、linear_velocity[3]、angular_velocity[3]
+hammer/functional_point[3]
+block/pose[7]、target_point[3]
+relative/hammer_head_to_block[3]、tcp_to_hammer[3]
+contacts/grasp_stable、active_gripper_hammer_contact、hammer_block_contact
+contacts/interval_hammer_block_impulse_*、interval_hammer_block_max_contact_speed
 ```
 
-从相邻时刻派生：
+主要 transition 字段：
 
 ```text
-delta_q_real
-delta_tcp_pose
-delta_hammer_pose
-hammer_head_to_block
-delta_hammer_head_to_block
-first_grasp / first_contact / slip / drop / success phase
+command_qpos[14]          target frame 观察到的 drive target
+delta_command_qpos[14]、delta_actual_qpos[14]
+delta_hammer_position[3]、delta_hammer_quaternion[4]
+hammer_block_contact、hammer_block_contact_onset
+hammer_block_impulse_world[3]、impulse_norm、max_impulse_norm
+hammer_block_contact_speed、hammer_tcp_slip_distance、grasp_lost
+physics_step_gap、valid_dynamics_transition
 ```
 
-必须记录 `valid_mask`。在 reset/terminal 边界禁止跨 episode 求差分。
+相邻重复保存可能产生 `physics_step_gap=0`；训练 auxiliary head 时必须用
+`valid_dynamics_transition` 屏蔽。sidecar 每个文件只含一个 episode，禁止跨
+reset/terminal 求差分。四元数按 `wxyz` 保存，并先做符号对齐再求差。
+
+P0b 在线 RL 阶段如果需要 physics 诊断量，再单独经 SubEnv/VectorEnv 的 `info`
+传递；仍禁止把它拼入部署 observation。P0a 完成不等于 P0b 已完成。
 
 ### 对齐单元测试
 
@@ -487,10 +533,14 @@ PIN-WM 属于显式、可微物理 world model；PhysReflect-VLA 属于执行期
 
 ## 15. 现在最近的四个执行项
 
-1. 在 task 分支实现四份 hammer 专属 config 和一致性测试。
-2. 创建 3-episode `demo_clean` smoke config，运行原生专家 collector。
-3. 实现 physics snapshot/sidecar 与 t->t+1 对齐测试，再正式采 50 条成功轨迹。
-4. 完成 LeRobot v2.1 转换和 hammer π0.5 SFT，先做 30-seed reference 画像；通过 H1 门槛后再创建 `exp/physical-token-v1`。
+1. 用 GPU6 运行 `demo_clean_hammer_physics_smoke`，再执行 validator；先不并行
+   占用 GPU7，把标签语义验清。
+2. 人工检查三个 sidecar 的接触区间是否落在视频敲击附近，并记录接触、抓稳、
+   零步 transition 数量；不通过则修标签，不采 50 条。
+3. smoke 通过后再确定 50 条数据使用单卡，或为 GPU6/7 增加互不冲突的 seed、
+   episode 编号和输出目录；禁止两个 collector 同写一个目录。
+4. 完成 HDF5 -> LeRobot v2.1 转换和 hammer π0.5 SFT，做 30-seed reference
+   画像；通过 H1 门槛后再创建 `exp/physical-token-v1`。
 
 ## 16. 主要参考
 
